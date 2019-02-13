@@ -12,7 +12,9 @@ defmodule JSON do
   def decode!(bin, _opts \\ []) when is_binary(bin) do
     { rest, value } = do_decode(strip_ws(bin))
     "" = strip_ws(rest); value
-  rescue _ -> raise ArgumentError
+  rescue
+    _ ->
+      raise ArgumentError
   end
 
   defp do_decode(<< "\"",    rem :: binary >>), do: decode_string(rem, "")
