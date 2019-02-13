@@ -32,9 +32,9 @@ defmodule NotQuiteAwesome.Main do
     end
   end
 
-  defp do_stage(label, f) do
-    cfg = [frames: :braille, text: label, done: :remove]
-    ProgressBar.render_spinner(cfg, f)
+  defp do_stage(label, op) do
+    fmt = [frames: :clock, text: [label, "..."], done: :remove]
+    Spinner.render(fmt, op)
   end
 
   def main(argv) do
@@ -42,16 +42,23 @@ defmodule NotQuiteAwesome.Main do
 
     {repo, section, flags} = getopts(argv)
     section = section_regexp(section)
-    readme = fetch_readme(repo)
-    repos = find_repo_links(readme, section)
+    readme = stage "Fetching README", do: fetch_readme(repo)
+    repos = stage "Looking for links", do: find_repo_links(readme, section)
 
     unless flags[:dry_run] do
-      force = flags[:force]
-      unless force do
-        check_api_limit!(Enum.count(repos))
+      scan_mode = if flags[:force], do: :ugly, else: :normal
+
+      if scan_mode === :normal do
+        stage "Checking API limits" do
+          check_api_limit!(Enum.count(repos))
+        end
       end
-      scan_mode = if force, do: :ugly, else: :normal
-      sort_by_stars(repos, scan_mode) |> format()
+      
+      result = stage "Scanning repositories" do
+        sort_by_stars(repos, scan_mode)
+      end
+
+      format(result)
     else
       dry_run(repos)
     end
@@ -63,7 +70,7 @@ defmodule NotQuiteAwesome.Main do
   end
 
   defp abort(msg) do
-    IO.puts(:stderr, msg)
+    log(msg)
     System.halt(1)
   end
 
@@ -102,14 +109,23 @@ defmodule NotQuiteAwesome.Main do
 
   def dry_run(repos) do
     report = for {label, repo} <- repos do
-        "#{label}: https://github.com/#{repo}\n"
+        " #{label}: https://github.com/#{repo}\n"
     end
 
-    IO.write :stderr, [
-      "Scanning the following repositories:\n",
-      "====================================\n",
+    limits = case fetch_api_limits() do
+               %{remaining: rem, reset: reset} ->
+                 ["API calls remaining: #{rem}; next reset: ",
+                  format_timestamp(reset), "\n\n"]
+               _ ->
+                 []
+             end
+
+    IO.write([
+      limits,
+      "Found links:\n",
+      "------------\n",
       report
-    ]
+    ])
   end
 
   defp format(repos) do
@@ -128,30 +144,36 @@ defmodule NotQuiteAwesome.Main do
     end
 
     if Enum.find(repos, fn {_, _, rank} -> rank === :error end) do
-      IO.puts :stderr, [
-        "\n", bad, "WARNING: ", reset,
+      log([
+        "\n", warning(),
         "I were unable to access some repositories ",
         "(probably due to github API rate limit)."
-      ]
+      ])
     end
   end
 
-  defp sort_by_stars(repos, mode) do
-    stage "Scanning repositories..." do
-      tasks = for {_label, repo} <- repos do
-        Task.async(fn -> fetch_repo_stars(repo, mode) end)
-      end
+  defp log(message) do
+    IO.puts(:stderr, [IO.ANSI.clear_line, "\r", message])
+  end
 
-      Task.yield_many(tasks, 15000)
-      |> Stream.zip(repos)
-      |> Stream.map(fn
-        {{_, {:ok, stars}}, {label, repo}} ->
-          {label, repo, stars}
-        {{_, nil}, {label, repo}} ->
-          {label, repo, :timeout}
-      end)
-      |> Enum.sort_by(&elem(&1, 2), &>=/2)
+  defp warning() do
+    [IO.ANSI.red, "WARNING: ", IO.ANSI.reset]
+  end
+
+  defp sort_by_stars(repos, mode) do
+    tasks = for {_label, repo} <- repos do
+      Task.async(fn -> fetch_repo_stars(repo, mode) end)
     end
+
+    Task.yield_many(tasks, 15000)
+    |> Stream.zip(repos)
+    |> Stream.map(fn
+      {{_, {:ok, stars}}, {label, repo}} ->
+        {label, repo, stars}
+      {{_, nil}, {label, repo}} ->
+        {label, repo, :timeout}
+    end)
+    |> Enum.sort_by(&elem(&1, 2), &>=/2)
   end
 
   defp fetch_repo_stars(repo, mode) do
@@ -176,15 +198,19 @@ defmodule NotQuiteAwesome.Main do
   end
 
   defp check_api_limit!(minimum) do
-    limits = stage "Checking API limits...", do: fetch_api_limits()
-    rem = limits.remaining
-    if minimum > rem do
-      message = [
-        "Github API limit exceeded: #{minimum} calls required, got only #{rem}\n",
-        "Next limits reset at ", format_timestamp(limits.reset),
-        "\nYou can use the --force flag to try and circumvent this."
-      ]
-      throw {:abort, message}
+    limits = fetch_api_limits()
+    if limits do
+      rem = limits.remaining
+      if minimum > rem do
+        message = [
+          "Github API limit exceeded: #{minimum} calls required, got only #{rem}\n",
+          "Next limits reset at ", format_timestamp(limits.reset),
+          "\nYou can use the --force flag to try and circumvent this."
+        ]
+        throw {:abort, message}
+      end
+    else
+      log([warning(), "unable to fetch API limits"])
     end
   end
 
@@ -205,13 +231,14 @@ defmodule NotQuiteAwesome.Main do
       _, acc ->
         acc
     end)
+  catch
+    %HTTP.RequestError{} ->
+      nil
   end
 
   defp fetch_readme(repo) do
-    readme = stage "Fetching README..." do
-      variants = ["README.md", "readme.md", "README.MD"]
-      try_readmes(repo, variants)
-    end
+    variants = ["README.md", "readme.md", "README.MD"]
+    readme = try_readmes(repo, variants)
 
     if is_nil(readme) do
       throw {:abort, "No README file found"}
