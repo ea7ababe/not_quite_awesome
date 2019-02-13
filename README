@@ -1,0 +1,15 @@
+nqa [-h] [--help] [--dry-run] REPOSITORY SECTION
+
+NotQuiteAwesome - a parser and sorter of awesome lists on github
+                  (https://github.com/sindresorhus/awesome)
+					
+At this time it can only sort one section of a list by the number of
+stars (highest first). The SECTION parameter is a regular expression.
+
+EXAMPLE: nqa drobakowski/awesome-erlang "Text and Numbers"
+will sort all links under the "Text and Numbers" section by stars.
+
+NOTE:  in order  to  get the  number  of stars  of  a repository  it
+currently relies on  github's JSON API (api.github.com)  which has a
+limit on the  number of requests. You can use  the --dry-run flag in
+order to get the list of repositories, without sorting.
