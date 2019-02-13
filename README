@@ -1,3 +1,6 @@
+USAGE
+=====
+
 nqa [-h] [--help] [--dry-run] REPOSITORY SECTION
 
 NotQuiteAwesome - a parser and sorter of awesome lists on github
@@ -13,3 +16,11 @@ NOTE:  in order  to  get the  number  of stars  of  a repository  it
 currently relies on  github's JSON API (api.github.com)  which has a
 limit on the  number of requests. You can use  the --dry-run flag in
 order to get the list of repositories, without sorting.
+
+BUILDING
+========
+
+The project is written in Elixir, so you need to install that first.
+Having done that the build procedure is as simple as:
+
+    mix deps.get && mix
